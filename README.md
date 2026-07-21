@@ -1,38 +1,30 @@
-# VPLINK Proxy Hunter
+# VPLink Proxy Hunter — Workflow Edition
 
-3-engine proxy discovery, testing & verification pipeline with Supabase CRUD.
+Proxy discovery & verification pipeline deployed via GitHub Actions.
 
-## One-liner install
-
-```bash
-git clone https://github.com/adittaya/vplink-proxy-hunter && cd vplink-proxy-hunter && bash install.sh
-```
-
-## Usage
+## Deployment Tool
 
 ```bash
-vplink-hunter                      # start scanning
-vplink-hunter --once               # single batch
-vplink-hunter --list               # query database
-vplink-hunter --list --type residential
-vplink-hunter --db-stats           # database summary
-
-python3 proxy_pull.py              # pull working proxy details
-python3 proxy_pull.py --test       # pull + test 5 proxies
-python3 proxy_pull.py --stats      # show DB statistics
-proxy-api --port 8080              # REST API server
-
-python3 examples/proxy_connect_test.py   # test 5 proxies x 5 URLs
+python3 proxy247.py                # Interactive menu
+python3 proxy247.py deploy new     # Deploy a new hunter
+python3 proxy247.py deploy bulk N  # Bulk-deploy N hunters
 ```
 
-## Architecture
+## What's inside
 
-```
-Generator (14 sources) → Queue → Tester (80 workers) → Queue → Verifier (5 workers) → Supabase
-```
+- `proxy247.py` — The deployment manager (accounts, deploy, test, analytics)
+- `vplink_hunter/` — 3-engine proxy scanner (scrape → test → verify → DB)
+- `.github/workflows/hunt.yml` — GitHub Actions workflow for scheduled proxy hunting
 
-## Development
+## Requirements
+
+- GitHub account + personal access token
+- Supabase project with `proxy_results` table
+
+## Quick start
 
 ```bash
-pip install -e .
+python3 proxy247.py account add default --token ghp_xxxxx
+python3 proxy247.py db config
+python3 proxy247.py deploy new
 ```
