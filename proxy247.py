@@ -422,6 +422,39 @@ def cmd_db_show(_args):
     _say(f"Service:   {D}{'✓ set' if cfg['supabase_key'] else '✗ not set'}{N}")
     _say(f"Secret:    {D}{'✓ set' if cfg['supabase_secret'] else '✗ not set'}{N}")
 
+def cmd_db_premium(_args):
+    cfg = get_db_config()
+    if not cfg.get("supabase_url") or not cfg.get("supabase_secret"):
+        _fail("Supabase not configured. Run 'proxy247 db config' first"); return
+    url = cfg["supabase_url"].rstrip("/")
+    key = cfg.get("supabase_secret") or cfg.get("supabase_key", "")
+    _header("★ Premium Proxies")
+    _say("Premium = residential + VPLINK-verified\n")
+    headers = {"apikey": key, "Authorization": f"Bearer {key}", "Accept": "application/json"}
+    def _cnt(params):
+        try:
+            q = f"{url}/rest/v1/proxy_results?select=count&count=exact&{params}"
+            req = urllib.request.Request(q, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return int(r.headers.get("content-range", "0-0/0").split("/")[-1])
+        except Exception: return 0
+    total = _cnt("")
+    residential = _cnt("type=eq.residential")
+    dc = _cnt("type=eq.datacenter")
+    vp = _cnt("vplink_ok=eq.true")
+    prem = min(residential, vp)
+    print(f"  {'Total proxies':20} {total}")
+    print(f"  {G}{'Residential':20}{N} {residential}")
+    print(f"  {Y}{'Datacenter':20}{N} {dc}")
+    print(f"  {C}{'VPLINK verified':20}{N} {vp}")
+    print(f"  {'Unknown':20} {total - residential - dc}")
+    print(f"  {M}{'★ Premium (res+vp)':20}{N} {prem}")
+    if prem > 0:
+        _ok(f"{prem} premium proxies ready for use")
+    else:
+        _warn("No premium proxies — keep the hunter running")
+    print()
+
 # ── Stop / Start ─────────────────────────────────────────
 
 def _get_deployment_info(name):
@@ -525,10 +558,12 @@ def _print_analytics(name, info, r, is_aggregate=False):
     print(f"  {'Proxies seen (total):':16} {r['unique_ips']}")
     print(f"")
     print(f"  {B}Hunt Statistics:{N}")
+    prem = min(hs.get('residential', 0), hs.get('vplink_ok', 0))
     print(f"  {'Total proxies':16} {hs.get('total', 0)}")
     print(f"  {G}{'Residential':16}{N} {hs.get('residential', 0)}")
     print(f"  {Y}{'Datacenter':16}{N} {hs.get('datacenter', 0)}")
     print(f"  {C}{'VPLINK verified':16}{N} {hs.get('vplink_ok', 0)}")
+    print(f"  {M}{'★ Premium (res+vp)':16}{N} {prem}")
     if r["destinations"]:
         print()
         _say(f"  {B}Markers:{N}")
@@ -749,7 +784,8 @@ def _menu_deployments():
             _dash
         print()
         choice = _choose(["📋 List deployments", "🚀 Deploy new hunter", "📦 Bulk deploy",
-                          "📈 Analytics", "🧪 Test deployment", "🔍  Check latest run",
+                          "📈 Analytics", "★ Premium count", "🧪 Test deployment",
+                          "🔍  Check latest run",
                           "⏹  Stop hunter", "▶️  Start hunter",
                           "🗑 Remove deployment", "⚡ Quick deploy (bare-bones)"])
         if choice < 0: return
@@ -759,22 +795,24 @@ def _menu_deployments():
             cmd_deploy(argparse.Namespace(name=None, key=None,
                         supabase_url=None, supabase_key=None, supabase_secret=None)); _pause()
         elif choice == 2:
-            cmd_bulk_deploy(argparse.Namespace(count=None, key=None,
+            cmd_bulk_deploy(argparse.Namespace(count=None,
                             supabase_url=None, supabase_key=None, supabase_secret=None)); _pause()
-        elif choice in (3, 4, 5, 6, 7):
+        elif choice == 3:
+            cmd_db_premium(None); _pause()
+        elif choice in (4, 5, 6, 7, 8):
             if not deps: _warn("No deployments."); _pause(); continue
             if len(deps) == 1:
                 name = next(iter(deps))
             else:
                 _say(f"\n  Deployments: {', '.join(sorted(deps.keys()))}")
                 name = _prompt("Deployment name")
-            if choice == 3: cmd_analytics(argparse.Namespace(name=name, aggregate=False)); _pause()
-            elif choice == 4: cmd_test(argparse.Namespace(name=name))
-            elif choice == 5: cmd_check(argparse.Namespace(name=name)); _pause()
-            elif choice == 6: cmd_stop(argparse.Namespace(name=name))
-            elif choice == 7: cmd_start(argparse.Namespace(name=name))
-            elif choice == 8: cmd_deploy_remove(argparse.Namespace(name=name))
-        elif choice == 9:
+            if choice == 4: cmd_analytics(argparse.Namespace(name=name, aggregate=False)); _pause()
+            elif choice == 5: cmd_test(argparse.Namespace(name=name))
+            elif choice == 6: cmd_check(argparse.Namespace(name=name)); _pause()
+            elif choice == 7: cmd_stop(argparse.Namespace(name=name))
+            elif choice == 8: cmd_start(argparse.Namespace(name=name))
+            elif choice == 9: cmd_deploy_remove(argparse.Namespace(name=name))
+        elif choice == 10:
             accts = load_accounts()
             if not accts: _warn("No accounts. Add one first."); _pause(); continue
             name = _prompt("Repo name (enter for random)")
@@ -841,6 +879,7 @@ def _run_menu():
             print(f"    {C}proxy247 start <name>{N}      Start (enable) hunter")
             print(f"    {C}proxy247 db config{N}         Set Supabase credentials (persistent)")
             print(f"    {C}proxy247 db show{N}           Show current DB config")
+            print(f"    {C}proxy247 db premium{N}        Count premium proxies in DB")
             print(f"    {C}proxy247 analytics{N}          Aggregate analytics across all deployments")
             print(f"    {C}proxy247 analytics <name>{N}   Analytics for a single deployment")
             print(f"    {C}proxy247 status{N}            Show overall status")
@@ -875,6 +914,7 @@ Examples:
   proxy247 start <name>          Start (enable) hunter
   proxy247 db config            Set Supabase credentials (persistent)
   proxy247 db show              Show current DB config
+  proxy247 db premium           Count premium proxies in DB
   proxy247 analytics            Aggregate analytics across all deployments
   proxy247 analytics <name>     Analytics for a single deployment
   proxy247 status               Show overall status
@@ -930,6 +970,8 @@ Examples:
     p.set_defaults(func=cmd_db_configure)
     p = db_sub.add_parser("show", help="Show current database config")
     p.set_defaults(func=cmd_db_show)
+    p = db_sub.add_parser("premium", help="Count premium proxies (residential + VPLINK-verified)")
+    p.set_defaults(func=cmd_db_premium)
 
     p = sub.add_parser("analytics", aliases=["stats"],
                        help="View analytics per deployment or full account")
