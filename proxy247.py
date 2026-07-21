@@ -366,15 +366,7 @@ def cmd_bulk_deploy(args):
     print(f"  {G}│{N}  {G}Success:{N} {ok:<5} {' ' * 32} {G}│{N}")
     print(f"  {G}│{N}  {R}Failed:{N}  {fail:<5} {' ' * 32} {G}│{N}")
     print(f"  {G}╰{'─'*46}╯{N}")
-    print()
-    print(f"  {G}╭{'─'*46}╮{N}")
-    print(f"  {G}│{N}  {B}✓ DEPLOYED SUCCESSFULLY{N}{' ' * 24} {G}│{N}")
-    print(f"  {G}├{'─'*46}┤{N}")
-    print(f"  {G}│{N}  Repo:  {C}{repo['html_url']:<39}{N} {G}│{N}")
-    print(f"  {G}│{N}  Name:  {C}{repo_name:<39}{N} {G}│{N}")
-    print(f"  {G}│{N}  Key:   {C}{key:<39}{N} {G}│{N}")
-    print(f"  {G}╰{'─'*46}╯{N}")
-    print(f"\n  Run {C}proxy247 test {repo_name}{N} to verify it works.\n")
+    print(f"\n  Run {C}proxy247 list{N} to see all deployments.\n")
 
 def cmd_deploy_list(_args):
     deps = load_deployments()
@@ -396,6 +388,41 @@ def cmd_deploy_remove(args):
         _ok("Repo deleted")
     del deps[args.name]; save_deployments(deps)
     _ok(f"Deployment '{args.name}' removed")
+
+def cmd_nuke_all(_args):
+    deps = load_deployments()
+    if not deps: _warn("No deployments to nuke."); return
+    accounts = load_accounts()
+    _header("💥 NUKE ALL DEPLOYMENTS")
+    _say(f"  {R}This will delete {len(deps)} GitHub repos and remove all deployments.{N}")
+    _say(f"  {Y}Repos to delete:{N}")
+    for name, info in sorted(deps.items()):
+        _say(f"    {C}▸{N} {info.get('account','?')}/{name}")
+    print()
+    if not _confirm(f"Delete ALL {len(deps)} repos permanently?"): _say("Cancelled"); return
+    if not _confirm(f"Are you absolutely sure? This cannot be undone."): _say("Cancelled"); return
+    print()
+    ok, fail = 0, 0
+    for name, info in sorted(deps.items()):
+        account = info.get("account", "?")
+        token = accounts.get(account, {}).get("token")
+        _say(f"  {C}▸{N} Deleting {account}/{name} ...")
+        try:
+            if token:
+                _api(token, "DELETE", f"/repos/{account}/{name}")
+            ok += 1
+            _ok(f"  Deleted {account}/{name}")
+        except Exception as e:
+            fail += 1
+            _fail(f"  Failed {account}/{name}: {e}")
+    save_deployments({})
+    print()
+    print(f"  {G}╭{'─'*44}╮{N}")
+    print(f"  {G}│{N}  {B}💥 NUKE COMPLETE{N}{' ' * 26} {G}│{N}")
+    print(f"  {G}├{'─'*44}┤{N}")
+    print(f"  {G}│{N}  {G}Deleted:{N} {ok:<5} {' ' * 30} {G}│{N}")
+    print(f"  {G}│{N}  {R}Failed:{N}  {fail:<5} {' ' * 30} {G}│{N}")
+    print(f"  {G}╰{'─'*44}╯{N}\n")
 
 
 # ── Database Config ──────────────────────────────────────
@@ -779,7 +806,8 @@ def _menu_deployments():
                           "📈 Analytics", "★ Premium count", "🧪 Test deployment",
                           "🔍  Check latest run",
                           "⏹  Stop hunter", "▶️  Start hunter",
-                          "🗑 Remove deployment", "⚡ Quick deploy (bare-bones)"])
+                          "🗑 Remove deployment", "⚡ Quick deploy (bare-bones)",
+                          "💥 Nuke all repos"])
         if choice < 0: return
         if choice == 0:
             cmd_deploy_list(None); _pause()
@@ -810,6 +838,8 @@ def _menu_deployments():
             name = _prompt("Repo name (enter for random)")
             cmd_deploy(argparse.Namespace(name=name or None,
                         supabase_url=None, supabase_key=None, supabase_secret=None)); _pause()
+        elif choice == 11:
+            cmd_nuke_all(None); _pause()
 
 def cmd_wizard(_args):
     if not _STDIN_TTY:
@@ -951,6 +981,8 @@ Examples:
     p = dep_sub.add_parser("remove", help="Remove a deployment")
     p.add_argument("name", help="Deployment name")
     p.set_defaults(func=cmd_deploy_remove)
+    p = dep_sub.add_parser("nuke-all", aliases=["nuke"], help="Delete ALL deployed repos")
+    p.set_defaults(func=cmd_nuke_all)
 
     p = sub.add_parser("test", help="Test a deployment")
     p.add_argument("name", help="Deployment name")
