@@ -2,6 +2,12 @@
 
 Proxy discovery & verification pipeline deployed via GitHub Actions.
 
+## One-liner install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/adittaya/workflow-proxy/main/install-proxy247.sh | bash
+```
+
 ## Deployment Tool
 
 ```bash
