@@ -506,13 +506,9 @@ def _fetch_run_logs(token, owner, repo, run_id):
         return raw.decode(errors="replace")
 
 def _parse_run_logs(text):
-    dests = []; ips = []; lines = text.split("\n")
+    ips = []; lines = text.split("\n")
     stats = {"total": 0, "residential": 0, "datacenter": 0, "vplink_ok": 0}
     for line in lines:
-        if line.strip().startswith("DESTINATION URL:"):
-            for p in line.split():
-                if p.startswith("http") and len(p) > 10:
-                    if p not in dests: dests.append(p)
         m = re.search(r"Total proxies:\s+(\d+)", line)
         if m: stats["total"] = int(m.group(1))
         m = re.search(r"Residential:\s+(\d+)", line)
@@ -521,7 +517,10 @@ def _parse_run_logs(text):
         if m: stats["datacenter"] = int(m.group(1))
         m = re.search(r"VPLINK verified:\s+(\d+)", line)
         if m: stats["vplink_ok"] = int(m.group(1))
-    return dests, ips, stats
+        # Detect proxy IPs from vplink-hunter --list output
+        m = re.search(r"\[(R|D|.)\]\s+(\d+\.\d+\.\d+\.\d+):(\d+)", line)
+        if m and m.group(2) not in ips: ips.append(m.group(2))
+    return ips, stats
 
 def _analyze_deployment(name, info, token):
     owner, repo = info["account"], name
@@ -530,7 +529,7 @@ def _analyze_deployment(name, info, token):
     except SystemExit:
         return None
     wf = runs.get("workflow_runs", [])
-    total, success, failed, all_dests, all_ips = 0, 0, 0, [], []
+    total, success, failed, all_ips = 0, 0, 0, []
     agg_stats = {"total": 0, "residential": 0, "datacenter": 0, "vplink_ok": 0}
     for r in wf:
         total += 1; c = r.get("conclusion", "")
@@ -538,37 +537,31 @@ def _analyze_deployment(name, info, token):
         elif c in ("failure", "cancelled", "timed_out"): failed += 1
         if r.get("status") == "completed" and r.get("conclusion"):
             logs = _fetch_run_logs(token, owner, repo, r["id"])
-            dests, ips, s = _parse_run_logs(logs)
-            all_dests.extend(dests); all_ips.extend(ips)
+            ips, s = _parse_run_logs(logs)
+            all_ips.extend(ips)
             for k in agg_stats: agg_stats[k] += s[k]
     return {"total_runs": total, "success": success, "failed": failed,
             "other": total - success - failed,
-            "destinations": all_dests, "unique_dests": len(set(all_dests)),
             "ips": all_ips, "unique_ips": len(set(all_ips)),
             "hunt_stats": agg_stats}
 
 def _print_analytics(name, info, r, is_aggregate=False):
     tag = f"{B}Aggregate ({len(name)} deployments){N}" if is_aggregate else f"{B}{name}{N} ({C}{info['account']}{N})"
     hs = r.get("hunt_stats", {})
-    print(f"  {tag}")
-    print(f"  {'Runs:':16} {r['total_runs']}")
-    print(f"  {G}{'✓ Succeeded:':16}{N} {r['success']}")
-    print(f"  {R}{'✗ Failed:':16}{N} {r['failed']}")
-    print(f"  {'Other:':16} {r['other']}")
-    print(f"  {'Proxies seen (total):':16} {r['unique_ips']}")
-    print(f"")
-    print(f"  {B}Hunt Statistics:{N}")
     prem = min(hs.get('residential', 0), hs.get('vplink_ok', 0))
-    print(f"  {'Total proxies':16} {hs.get('total', 0)}")
-    print(f"  {G}{'Residential':16}{N} {hs.get('residential', 0)}")
-    print(f"  {Y}{'Datacenter':16}{N} {hs.get('datacenter', 0)}")
-    print(f"  {C}{'VPLINK verified':16}{N} {hs.get('vplink_ok', 0)}")
-    print(f"  {M}{'★ Premium (res+vp)':16}{N} {prem}")
-    if r["destinations"]:
-        print()
-        _say(f"  {B}Markers:{N}")
-        for d in sorted(set(r["destinations"])):
-            print(f"    {C}▸{N} {G}{d}{N}")
+    print(f"  {tag}")
+    print(f"  {'Runs:':20} {r['total_runs']}")
+    print(f"  {G}{'✓ Succeeded:':20}{N} {r['success']}")
+    print(f"  {R}{'✗ Failed:':20}{N} {r['failed']}")
+    print(f"  {'Other:':20} {r['other']}")
+    print(f"  {'Proxies discovered:':20} {r['unique_ips']}")
+    print(f"")
+    print(f"  {B}Database Statistics (cumulative):{N}")
+    print(f"  {'Total proxies':20} {hs.get('total', 0)}")
+    print(f"  {G}{'Residential':20}{N} {hs.get('residential', 0)}")
+    print(f"  {Y}{'Datacenter':20}{N} {hs.get('datacenter', 0)}")
+    print(f"  {C}{'VPLINK verified':20}{N} {hs.get('vplink_ok', 0)}")
+    print(f"  {M}{'★ Premium (res+vp)':20}{N} {prem}")
     print()
 
 def cmd_analytics(args):
@@ -576,8 +569,8 @@ def cmd_analytics(args):
     if args.name and args.name not in deps: _fail(f"Deployment '{args.name}' not found"); return
     _header("📊 Analytics Report")
     if args.aggregate or not args.name:
-        all_dests = []; all_ips = []
-        total_s, total_f, total_r, total_u, total_ip, dep_count = 0, 0, 0, 0, 0, 0
+        all_ips = []
+        total_s, total_f, total_r, total_ip, dep_count = 0, 0, 0, 0, 0
         for name, info in sorted(deps.items()):
             token = accounts.get(info["account"], {}).get("token")
             if not token: continue
@@ -585,13 +578,12 @@ def cmd_analytics(args):
             r = _analyze_deployment(name, info, token)
             if not r: continue
             total_r += r["total_runs"]; total_s += r["success"]; total_f += r["failed"]
-            all_dests.extend(r["destinations"]); all_ips.extend(r["ips"])
-            total_u += r["unique_dests"]; total_ip += r["unique_ips"]; dep_count += 1
+            all_ips.extend(r["ips"]); total_ip += r["unique_ips"]; dep_count += 1
         print()
         if dep_count == 0: _warn("No deployments found."); return
         agg = {"total_runs": total_r, "success": total_s, "failed": total_f,
-               "other": total_r - total_s - total_f, "destinations": all_dests,
-               "unique_dests": len(set(all_dests)), "ips": all_ips, "unique_ips": len(set(all_ips))}
+               "other": total_r - total_s - total_f,
+               "ips": all_ips, "unique_ips": len(set(all_ips))}
         _print_analytics([d for d in deps], None, agg, is_aggregate=True)
         return
     name, info = args.name, deps[args.name]

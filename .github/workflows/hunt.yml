@@ -31,10 +31,8 @@ jobs:
       - name: Run hunter
         run: |
           echo "::group::Hunter Start"
-          echo "DESTINATION URL: https://vplink.in/hunt"
-          vplink-hunter --once 2>&1 | tail -50
+          vplink-hunter --once 2>&1
           echo "::endgroup::"
-          echo "DESTINATION URL: https://vplink.in/hunt"
       - name: Summary
         run: |
           vplink-hunter --db-stats 2>&1 || true
