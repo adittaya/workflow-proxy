@@ -467,13 +467,15 @@ def cmd_db_premium(_args):
     key = cfg.get("supabase_secret") or cfg.get("supabase_key", "")
     _header("★ Premium Proxies")
     _say("Premium = residential + VPLINK-verified\n")
-    headers = {"apikey": key, "Authorization": f"Bearer {key}", "Accept": "application/json"}
+    headers = {"apikey": key, "Authorization": f"Bearer {key}", "Accept": "application/json",
+               "Prefer": "count=exact"}
     def _cnt(params):
         try:
-            q = f"{url}/rest/v1/proxy_results?select=count&count=exact&{params}"
+            q = f"{url}/rest/v1/proxy_results?select=id&{params}"
             req = urllib.request.Request(q, headers=headers)
             with urllib.request.urlopen(req, timeout=10) as r:
-                return int(r.headers.get("content-range", "0-0/0").split("/")[-1])
+                cr = r.headers.get("content-range", "")
+                return int(cr.split("/")[-1]) if "/" in cr else 0
         except Exception: return 0
     total = _cnt("")
     residential = _cnt("type=eq.residential")
@@ -736,15 +738,20 @@ def cmd_status(_args):
     _say(f"{'Deployments:':18} {len(deps)}")
     print()
     if not deps: _warn("No deployments. Use 'proxy247 deploy'"); return
+    stale = []
     for name, info in sorted(deps.items()):
         accounts_data = load_accounts()
         token = accounts_data.get(info["account"], {}).get("token")
         status_str = "?"
         if token:
             try:
+                _api(token, "GET", f"/repos/{info['account']}/{name}")
                 runs = _api(token, "GET", f"/repos/{info['account']}/{name}/actions/runs?per_page=1")
                 for r in runs.get("workflow_runs", []):
                     status_str = r.get("conclusion") or r.get("status", "?")
+            except SystemExit:
+                status_str = f"{R}deleted{N}"
+                stale.append(name)
             except Exception:
                 status_str = f"{R}err{N}"
         color = G if status_str == "success" else (Y if status_str in ("in_progress","queued","pending") else R)
@@ -753,6 +760,11 @@ def cmd_status(_args):
         print(f"      {'Status:':12} {color}{status_str}{N}")
         print(f"      {'URL:':12} {info.get('repo_url','')}")
         print()
+    if stale:
+        for name in stale:
+            del deps[name]
+        save_deployments(deps)
+        _warn(f"Cleaned {len(stale)} stale deployment(s): {', '.join(stale)}")
 
 
 # ── Menu system ──────────────────────────────────────────
