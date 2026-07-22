@@ -290,7 +290,7 @@ def _deploy_one(active, token, repo_name, supabase_url, supabase_key, supabase_s
         _git_run(["git", "remote", "add", "origin", authed], cwd=tgt)
         _git_run(["git", "push", "-u", "origin", "main", "--force"], cwd=tgt)
     _say(f"  {C}▸{N} Configuring GitHub Secrets ...")
-    for sn, sv in [("SUPABASE_URL", supabase_url), ("SUPABASE_SERVICE_KEY", supabase_key),
+    for sn, sv in [("SUPABASE_URL", supabase_url), ("SUPABASE_SERVICE_KEY", supabase_secret),
                    ("GH_PAT", token)]:
         _set_secret(token, active, repo_name, sn, sv)
     _ok("Secrets set")
