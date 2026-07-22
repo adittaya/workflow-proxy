@@ -3,18 +3,28 @@ name: hunt
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/5 * * * *'
+  repository_dispatch:
+    types: [loop_hunt]
+
+concurrency:
+  group: proxy-hunt-global
+  cancel-in-progress: false
+  max-parallel: 3
 
 jobs:
   hunt:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v7
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+
       - run: pip install -q -e .
+
       - name: Configure Supabase
         run: |
           mkdir -p ~/.config/vplink-hunter
@@ -28,12 +38,25 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
       - name: Run hunter
         run: |
           echo "::group::Hunter Start"
           vplink-hunter --once 2>&1
           echo "::endgroup::"
+
       - name: Summary
         run: |
           vplink-hunter --db-stats 2>&1 || true
           vplink-hunter --list --limit 5 2>&1 || true
+
+      - name: Trigger next hunt cycle
+        if: always() && !cancelled()
+        env:
+          TRIGGER_TOKEN: ${{ secrets.LOOP_TRIGGER_TOKEN }}
+        run: |
+          curl -fsSL -X POST \
+            -H "Authorization: token $TRIGGER_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/dispatches" \
+            -d '{"event_type":"loop_hunt"}'
