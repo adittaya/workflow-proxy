@@ -302,6 +302,82 @@ def _deploy_one(active, token, repo_name, supabase_url, supabase_key, supabase_s
     _ok("Workflow dispatched")
     return repo_name, repo["html_url"]
 
+def _update_one(active, token, repo_name, supabase_url, supabase_key, supabase_secret, template_dir=None):
+    _say(f"\n  {C}── {repo_name} ──{N}")
+    _say(f"  {C}▸{N} Cloning existing repo ...")
+    with tempfile.TemporaryDirectory(prefix="proxy247-update-") as tmpdir:
+        tgt = Path(tmpdir) / repo_name
+        _git_run(["git", "clone", "--depth=5",
+                   f"https://{token}@github.com/{active}/{repo_name}.git", str(tgt)])
+        if template_dir:
+            _say(f"  {C}▸{N} Copying updated template ...")
+            for item in template_dir.iterdir():
+                if item.name == ".git":
+                    continue
+                dest = tgt / item.name
+                if item.is_dir():
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(item, dest)
+                else:
+                    shutil.copy2(item, dest)
+        else:
+            _say(f"  {C}▸{N} Pulling latest from template ...")
+            _git_run(["git", "remote", "add", "upstream",
+                       f"https://github.com/{TEMPLATE_REPO}.git"], cwd=tgt)
+            _git_run(["git", "fetch", "upstream"], cwd=tgt)
+            _git_run(["git", "checkout", "main"], cwd=tgt)
+            _git_run(["git", "merge", "upstream/main", "--allow-unrelated-histories",
+                       "-m", "update by proxy247"], cwd=tgt)
+        _say(f"  {C}▸{N} Pushing updated code ...")
+        _git_run(["git", "add", "-A"], cwd=tgt)
+        _git_run(["git", "commit", "-m", "update by proxy247"], cwd=tgt)
+        _git_run(["git", "push", "origin", "main", "--force"], cwd=tgt)
+    _say(f"  {C}▸{N} Configuring GitHub Secrets ...")
+    for sn, sv in [("SUPABASE_URL", supabase_url), ("SUPABASE_SERVICE_KEY", supabase_secret),
+                   ("GH_PAT", token), ("LOOP_TRIGGER_TOKEN", token)]:
+        _set_secret(token, active, repo_name, sn, sv)
+    _ok("Secrets set")
+    deps = load_deployments()
+    if repo_name not in deps:
+        deps[repo_name] = {"account": active, "created_at": time.time()}
+    deps[repo_name]["updated_at"] = time.time()
+    save_deployments(deps)
+    _say(f"  {C}▸{N} Triggering workflow ...")
+    _trigger_workflow(token, active, repo_name)
+    _ok("Done")
+    return repo_name
+
+def cmd_deploy_update(args):
+    accounts = load_accounts(); active = get_setting("active_account")
+    if not active or active not in accounts: _fail("No active account."); return
+    token = accounts[active]["token"]
+    deps = load_deployments()
+    account_deps = {k: v for k, v in deps.items() if v.get("account") == active}
+    if not account_deps:
+        _fail("No deployments on this account."); return
+    repo_name = getattr(args, "name", None)
+    supabase_url, supabase_key, supabase_secret = _resolve_supabase(args)
+    _hline
+    _say(f"{C}Updating template on {active}{N} ...")
+    _say("Fetching latest template ...")
+    with tempfile.TemporaryDirectory(prefix="proxy247-tpl-") as tmpdir:
+        template_dir = Path(tmpdir) / "template"
+        _git_run(["git", "clone", "--depth=1", f"https://github.com/{TEMPLATE_REPO}.git", str(template_dir)])
+        if repo_name:
+            if repo_name not in account_deps:
+                _fail(f"Deployment '{repo_name}' not found on {active}."); return
+            _update_one(active, token, repo_name, supabase_url, supabase_key, supabase_secret, template_dir)
+        else:
+            _say(f"Found {C}{len(account_deps)}{N} deployments. Updating all ...")
+            updated = 0
+            for name, info in sorted(account_deps.items()):
+                _update_one(active, token, name, supabase_url, supabase_key, supabase_secret, template_dir)
+                updated += 1
+                time.sleep(2)
+            _ok(f"\nUpdated {C}{updated}{N} deployments.")
+    print()
+
 def cmd_deploy(args):
     accounts = load_accounts(); active = get_setting("active_account")
     if not active or active not in accounts: _fail("No active account. Add one first: proxy247 account add"); return
@@ -829,6 +905,7 @@ def _menu_deployments():
                           "🔍  Check latest run",
                           "⏹  Stop hunter", "▶️  Start hunter",
                           "🗑 Remove deployment", "⚡ Quick deploy (bare-bones)",
+                          "🔄  Update template on ALL repos",
                           "💥 Nuke all repos"])
         if choice < 0: return
         if choice == 0:
@@ -861,6 +938,9 @@ def _menu_deployments():
             cmd_deploy(argparse.Namespace(name=name or None,
                         supabase_url=None, supabase_key=None, supabase_secret=None)); _pause()
         elif choice == 11:
+            cmd_deploy_update(argparse.Namespace(name=None,
+                        supabase_url=None, supabase_key=None, supabase_secret=None)); _pause()
+        elif choice == 12:
             cmd_nuke_all(None); _pause()
 
 def cmd_wizard(_args):
@@ -905,28 +985,26 @@ def _run_menu():
             _header("📖 CLI Reference")
             print(f"    {C}proxy247{N}                   Interactive menu (this)")
             print(f"    {C}proxy247 setup{N}             Same as above")
-            print(f"    {C}proxy247 account add{N}       Add a GitHub account")
-            print(f"    {C}proxy247 account list{N}      List accounts")
-            print(f"    {C}proxy247 account switch{N}    Switch active account")
-            print(f"    {C}proxy247 login <token>{N}     Login (validates against API)")
-            print(f"    {C}proxy247 account list{N}      List accounts")
-            print(f"    {C}proxy247 account add{N}       Add account with name + token")
-            print(f"    {C}proxy247 account switch{N}    Switch active account")
-            print(f"    {C}proxy247 account remove{N}    Remove an account")
-            print(f"    {C}proxy247 deploy new{N}        Create a new deployment")
-            print(f"    {C}proxy247 deploy bulk{N}       Bulk-deploy N hunters")
-            print(f"    {C}proxy247 deploy list{N}       List deployments")
-            print(f"    {C}proxy247 deploy remove{N}     Remove a deployment")
-            print(f"    {C}proxy247 test <name>{N}       Test a deployment (dispatch + monitor)")
-            print(f"    {C}proxy247 check <name>{N}      Check latest run status (no dispatch)")
-            print(f"    {C}proxy247 stop <name>{N}       Stop (disable) hunter")
-            print(f"    {C}proxy247 start <name>{N}      Start (enable) hunter")
-            print(f"    {C}proxy247 db config{N}         Set Supabase credentials (persistent)")
-            print(f"    {C}proxy247 db show{N}           Show current DB config")
-            print(f"    {C}proxy247 db premium{N}        Count premium proxies in DB")
-            print(f"    {C}proxy247 analytics{N}          Aggregate analytics across all deployments")
-            print(f"    {C}proxy247 analytics <name>{N}   Analytics for a single deployment")
-            print(f"    {C}proxy247 status{N}            Show overall status")
+            print(f"    {C}proxy247 account add{N}        Add a GitHub account")
+            print(f"    {C}proxy247 account list{N}       List accounts")
+            print(f"    {C}proxy247 account switch{N}     Switch active account")
+            print(f"    {C}proxy247 account remove{N}     Remove an account")
+            print(f"    {C}proxy247 deploy new{N}         Create a new deployment")
+            print(f"    {C}proxy247 deploy bulk{N}        Bulk-deploy N hunters")
+            print(f"    {C}proxy247 deploy list{N}         List deployments")
+            print(f"    {C}proxy247 deploy remove{N}       Remove a deployment")
+            print(f"    {C}proxy247 deploy nuke-all{N}     Delete ALL repos + records")
+            print(f"    {C}proxy247 deploy update{N}       Re-deploy updated template to repos")
+            print(f"    {C}proxy247 test <name>{N}         Test a deployment (dispatch + monitor)")
+            print(f"    {C}proxy247 check <name>{N}        Check latest run status (no dispatch)")
+            print(f"    {C}proxy247 stop <name>{N}         Stop (disable) hunter")
+            print(f"    {C}proxy247 start <name>{N}        Start (enable) hunter")
+            print(f"    {C}proxy247 db config{N}           Set Supabase credentials (persistent)")
+            print(f"    {C}proxy247 db show{N}             Show current DB config")
+            print(f"    {C}proxy247 db premium{N}          Count premium proxies in DB")
+            print(f"    {C}proxy247 analytics{N}             Aggregate analytics across all deployments")
+            print(f"    {C}proxy247 analytics <name>{N}      Analytics for a single deployment")
+            print(f"    {C}proxy247 status{N}               Show overall status")
             print()
             print(f"  {B}Flags:{N}")
             print(f"    account add default {C}--token ghp_xxxxx{N}")
@@ -952,6 +1030,9 @@ Examples:
   proxy247 deploy new            Deploy hunter relay
   proxy247 deploy bulk <N>       Bulk-deploy N automations
   proxy247 deploy list           List deployments
+  proxy247 deploy remove <name>  Remove a deployment
+  proxy247 deploy nuke-all       Delete ALL repos + records
+  proxy247 deploy update [name]  Re-deploy updated template to repos
   proxy247 test <name>           Test (dispatch + monitor)
   proxy247 check <name>          Check latest run (no dispatch)
   proxy247 stop <name>           Stop (disable) hunter
@@ -1005,6 +1086,12 @@ Examples:
     p.set_defaults(func=cmd_deploy_remove)
     p = dep_sub.add_parser("nuke-all", aliases=["nuke"], help="Delete ALL deployed repos")
     p.set_defaults(func=cmd_nuke_all)
+    p = dep_sub.add_parser("update", aliases=["upgrade"], help="Re-deploy updated template to existing repos")
+    p.add_argument("name", nargs="?", help="Deployment name (omit for all)")
+    p.add_argument("--supabase-url", help="Supabase project URL")
+    p.add_argument("--supabase-key", help="Supabase anon key")
+    p.add_argument("--supabase-secret", help="Supabase service key")
+    p.set_defaults(func=cmd_deploy_update)
 
     p = sub.add_parser("test", help="Test a deployment")
     p.add_argument("name", help="Deployment name")
