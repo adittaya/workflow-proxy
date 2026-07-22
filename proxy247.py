@@ -338,6 +338,7 @@ def cmd_bulk_deploy(args):
     if not _confirm(f"Create {count} repos with random names?"): _say("Cancelled"); return
     if count > 100:
         _warn(f"Large batch ({count}) — expect ~30s per repo due to API + git operations.")
+        _warn(f"GitHub may suspend accounts for rapid mass-creation.")
         if not _confirm(f"Continue with {count} repos?"): _say("Cancelled"); return
     print()
     _say(f"{C}▸{N} Cloning template (one-time)...")
@@ -384,6 +385,8 @@ def cmd_deploy_remove(args):
     accounts = load_accounts()
     token = accounts.get(info["account"], {}).get("token")
     if token and _confirm(f"Also delete the GitHub repo '{info['account']}/{args.name}'?"):
+        _say(f"  {C}▸{N} Deleting repo (waiting 2s for rate limit) ...")
+        time.sleep(2)
         _api(token, "DELETE", f"/repos/{info['account']}/{args.name}")
         _ok("Repo deleted")
     del deps[args.name]; save_deployments(deps)
@@ -399,11 +402,16 @@ def cmd_nuke_all(_args):
     for name, info in sorted(deps.items()):
         _say(f"    {C}▸{N} {info.get('account','?')}/{name}")
     print()
+    if len(deps) > 20:
+        _warn(f"Large batch ({len(deps)} repos) — deleting too fast will get your account suspended!")
+        _warn(f"GitHub rate limit: ~10 deletions/minute safe threshold.")
+        _say(f"  {Y}Recommendation: delete max 20 at a time, wait 5 minutes, then continue.{N}")
+        if not _confirm(f"Delete ALL {len(deps)} repos anyway? (risky)"): _say("Cancelled"); return
     if not _confirm(f"Delete ALL {len(deps)} repos permanently?"): _say("Cancelled"); return
     if not _confirm(f"Are you absolutely sure? This cannot be undone."): _say("Cancelled"); return
     print()
     ok, fail = 0, 0
-    for name, info in sorted(deps.items()):
+    for i, (name, info) in enumerate(sorted(deps.items())):
         account = info.get("account", "?")
         token = accounts.get(account, {}).get("token")
         _say(f"  {C}▸{N} Deleting {account}/{name} ...")
@@ -415,6 +423,8 @@ def cmd_nuke_all(_args):
         except Exception as e:
             fail += 1
             _fail(f"  Failed {account}/{name}: {e}")
+        if i < len(deps) - 1:
+            time.sleep(2)
     save_deployments({})
     print()
     print(f"  {G}╭{'─'*44}╮{N}")
