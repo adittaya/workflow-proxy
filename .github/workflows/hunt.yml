@@ -10,7 +10,6 @@ on:
 concurrency:
   group: proxy-hunt-global
   cancel-in-progress: false
-  max-parallel: 3
 
 jobs:
   hunt:
